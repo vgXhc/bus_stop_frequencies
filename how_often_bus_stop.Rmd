@@ -1,0 +1,157 @@
+---
+title: "Untitled"
+description: |
+  A new article created using the Distill format.
+author:
+  - name: Nora Jones 
+    url: https://example.com/norajones
+    affiliation: Spacely Sprockets
+    affiliation_url: https://example.com/spacelysprokets
+date: "`r Sys.Date()`"
+output: distill::distill_article
+bibliography: references.bib
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+```{r}
+library(tidytransit)
+library(tidyverse)
+library(lubridate)
+```
+
+Someone opened an issue on my blog post about creating a map of bus boardings: \> I know its kind of old but I was (re)visiting it in looking at the newest version of the redesign plan. It is difficult to compare ridership across stops when I know that some stops have more buses serving them than others. It would be cool to have ridership per bus or a similar measure. But I guess what we'd want is pre-pandemic frequencies. Is there even a source for old schedules were we to want to do it by hand?
+
+I responded: \> To get the number of buses at each stop, you'd need 1) a pre-pandemic GTFS schedule file and 2) code to parse that data in the way you want. The former appears to be available via OpenMobilityData. For the latter, I'm not super proficient with GTFS data, but number of buses at a given stop I think is not that hard. \[...\] I'll see if I find some time to play around with the old GTFS file.
+
+Fortunatley, there is an R package for working with GTFS data, `tidytransit`[@poletti2022], and the package includes helpful [vignettes](https://cran.r-project.org/web/packages/tidytransit/vignettes/frequency.html).
+
+# Determining relevant service patterns
+
+The `tidytransit` package has helpful vignettes for
+
+The ridership data provided by Metro is for weekday boardings. As a first step, we therefore need to identify the service patterns for weekday service. This is less straightforward than it sounds.
+
+We start by reading a GTFS file from January 2020, right before the pandemic hit.
+
+```{r}
+gtfs <- read_gtfs("data/gtfs_metro_madison_2020-01-30.zip")
+
+gtfs_cur <- read_gtfs("data/gtfs_metro_madison_2022-02-09.zip")
+```
+
+Explore how many service ID's there are:
+
+```{r}
+unique(gtfs$.$dates_services$service_id)
+```
+
+The names provide some indication of the type of service. Plotting the service patterns by date and day helps understand the less obvious parts of the`service_id`. We plot the first two months of 2020.
+
+```{r}
+library(lubridate)
+jan_feb_2020 <- interval("2020-01-01", "2020-02-28")
+
+gtfs$.$dates_services %>% 
+  filter(date %within% jan_feb_2020) %>% 
+  ggplot() + 
+  theme_bw() + 
+  geom_point(aes(x = date, y = service_id, color = wday(date, label = T)), size = 2)
+```
+
+This is a good time period: It contains two different holidays (New Year's Day and MLK Day) and it includes times when UW is and isn't in session.
+
+Based on the chart, we can conclude that we want to include any `service_id` that contains `wkd` in our analysis.
+
+```{r}
+service_ids <- gtfs$.$dates_services %>% 
+  filter(grepl("\\_WKD", service_id)) %>% 
+  pull(service_id)
+```
+
+```{r}
+gtfs$trips %>%
+  left_join(gtfs$.$dates_services, by="service_id") %>% view()
+
+get_route_frequency(gtfs, service_ids = service_ids, 
+                                     start_time = 0, end_time = 12*3600) 
+
+get_stop_frequency(gtfs, start_time = 0*3600, end_time = 12*3600, 
+                              service_ids = service_ids, by_route = F)
+
+stop_freq <- gtfs %>% 
+  filter_feed_by_date("2020-02-17") %>% 
+  get_stop_frequency(start_time = 0*3600, end_time = 24*3600, 
+                              by_route = F)
+
+stop_freq_cur <- gtfs_cur %>% 
+  filter_feed_by_date("2022-03-02") %>% 
+  get_stop_frequency(start_time = 0*3600, end_time = 24*3600, 
+                              by_route = F)
+  
+library(tmap)
+
+gtfs_shp <- gtfs %>% 
+  gtfs_as_sf() 
+tmap_mode("view")
+stop_freq <- gtfs_shp$stops %>% 
+  left_join(stop_freq, by = "stop_id") %>% 
+  filter(n_departures >1) 
+
+stop_freq %>% 
+  tm_shape() +
+  tm_dots(size = "n_departures", col = "n_departures")
+
+
+```
+
+```{r}
+library(tidyverse)
+library(sf)
+library(mapdeck)
+```
+
+```{r}
+boardings <- st_read("data/Metro_Transit_Ridership_by_Stop.shp") %>% 
+  st_drop_geometry()
+```
+
+```{r}
+boardings <- 
+  boardings %>% 
+  mutate(tooltip = paste0("Stop: ",
+                          StopDescri,
+                          "<br>",
+                          "Weekday boardings: ",
+                          Weekday),
+         stop_id = as.character(StopID))
+
+stop_freq %>% 
+  group_by(stop_id) %>% 
+  summarize(n_departures_2 = sum(n_departures))%>% 
+  left_join(boardings, by = "stop_id") %>% 
+  mutate(boardings_per_bus = Weekday/n_departures_2) %>% 
+  tm_shape() +
+  tm_dots(col = "boardings_per_bus", size = "boardings_per_bus")
+
+library(mapdeck)
+```
+
+# Boardings only
+
+Zoom in to see the data. Hover over the columns for more information. Right-click and drag to change the view angle and orientation.
+
+```{r results=TRUE}
+mapdeck(style = 'mapbox://styles/mapbox/light-v10', pitch = 45) %>% 
+  mapdeck::add_column(data = boardings, 
+                      elevation = "Weekday",
+                      radius = 20,
+                      fill_colour = "Weekday",
+                      legend = T,
+                      legend_format = list( fill_colour = as.integer ),
+                      legend_options = list(title = "Weekday boardings"),
+                      tooltip = "tooltip"
+                      )
+```
