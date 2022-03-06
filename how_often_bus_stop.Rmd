@@ -1,14 +1,21 @@
 ---
-title: "Untitled"
+title: "Boardings per bus per stop: A useful metric?"
 description: |
-  A new article created using the Distill format.
+  A follow-up on a post on Metro bus boardings per stop in Madison (WI)
 author:
-  - name: Nora Jones 
-    url: https://example.com/norajones
-    affiliation: Spacely Sprockets
-    affiliation_url: https://example.com/spacelysprokets
-date: "`r Sys.Date()`"
-output: distill::distill_article
+  - name: Harald Kliems 
+    orcid_id: 0000-0003-2542-0047
+    url: https://haraldkliems.netlify.app/
+date: 2022-03-06
+repository_url: https://github.com/vgXhc/bus_stop_frequencies
+compare_updates_url:
+creative_commons: CC BY-SA
+preview: img/boardings_per_departure_preview_map.png
+output: 
+  distill::distill_article:
+    self_contained: false
+    code_folding: true
+    toc: true
 bibliography: references.bib
 ---
 
@@ -20,35 +27,28 @@ knitr::opts_chunk$set(echo = FALSE)
 library(tidytransit)
 library(tidyverse)
 library(lubridate)
+library(kableExtra)
 ```
 
-Someone opened an issue on my blog post about creating a map of bus boardings: \> I know its kind of old but I was (re)visiting it in looking at the newest version of the redesign plan. It is difficult to compare ridership across stops when I know that some stops have more buses serving them than others. It would be cool to have ridership per bus or a similar measure. But I guess what we'd want is pre-pandemic frequencies. Is there even a source for old schedules were we to want to do it by hand?
+Someone opened [a Github issue](https://github.com/vgXhc/metro_boardings/issues/1) on [my blog post about creating a map of bus boardings](https://haraldkliems.netlify.app/posts/bus-boardings-in-madison/):
 
-I responded: \> To get the number of buses at each stop, you'd need 1) a pre-pandemic GTFS schedule file and 2) code to parse that data in the way you want. The former appears to be available via OpenMobilityData. For the latter, I'm not super proficient with GTFS data, but number of buses at a given stop I think is not that hard. \[...\] I'll see if I find some time to play around with the old GTFS file.
+> I know its kind of old but I was (re)visiting it in looking at the newest version of the redesign plan. It is difficult to compare ridership across stops when I know that some stops have more buses serving them than others. It would be cool to have ridership per bus or a similar measure. But I guess what we'd want is pre-pandemic frequencies. Is there even a source for old schedules were we to want to do it by hand?
 
-Fortunatley, there is an R package for working with GTFS data, `tidytransit`[@poletti2022], and the package includes helpful [vignettes](https://cran.r-project.org/web/packages/tidytransit/vignettes/frequency.html).
+I responded:
 
-# Determining relevant service patterns
+> To get the number of buses at each stop, you'd need 1) a pre-pandemic GTFS schedule file and 2) code to parse that data in the way you want. The former appears to be available via OpenMobilityData. For the latter, I'm not super proficient with GTFS data, but number of buses at a given stop I think is not that hard. \[...\] I'll see if I find some time to play around with the old GTFS file.
 
-The `tidytransit` package has helpful vignettes for
+Fortunately, there is an R package for working with GTFS data, `tidytransit` [@poletti2022], and the package includes helpful [vignettes](https://cran.r-project.org/web/packages/tidytransit/vignettes/frequency.html). So I tried answering the question.
 
-The ridership data provided by Metro is for weekday boardings. As a first step, we therefore need to identify the service patterns for weekday service. This is less straightforward than it sounds.
+# Parsing pre-pandemic frequencies
 
-We start by reading a GTFS file from January 2020, right before the pandemic hit.
+The ridership data provided in my previous post uses a two-week sample from February 2020, right before the COVID-19 pandemic led to massive service reductions and ridership decline. To match the boarding with bus frequencies at that time, we download a GTFS feed from January 30, 2020 from the [OpenMobilityData portal](https://openmobilitydata.org/p/metro-transit-madison/181).
 
 ```{r}
 gtfs <- read_gtfs("data/gtfs_metro_madison_2020-01-30.zip")
-
-gtfs_cur <- read_gtfs("data/gtfs_metro_madison_2022-02-09.zip")
 ```
 
-Explore how many service ID's there are:
-
-```{r}
-unique(gtfs$.$dates_services$service_id)
-```
-
-The names provide some indication of the type of service. Plotting the service patterns by date and day helps understand the less obvious parts of the`service_id`. We plot the first two months of 2020.
+We start with a quick plot of the different service patterns in the first two months on 2020:
 
 ```{r}
 library(lubridate)
@@ -61,97 +61,107 @@ gtfs$.$dates_services %>%
   geom_point(aes(x = date, y = service_id, color = wday(date, label = T)), size = 2)
 ```
 
-This is a good time period: It contains two different holidays (New Year's Day and MLK Day) and it includes times when UW is and isn't in session.
+We see that there are some services that run on some or all weekdays, some Saturday and Sunday and holiday services. We can also see that some services only run when the UW is in session/on break. Compared to the service pattern examples from the `tidytransit` vignettes, this is quite straightforward.
 
-Based on the chart, we can conclude that we want to include any `service_id` that contains `wkd` in our analysis.
-
-```{r}
-service_ids <- gtfs$.$dates_services %>% 
-  filter(grepl("\\_WKD", service_id)) %>% 
-  pull(service_id)
-```
+Rather than worrying about different service patterns, we therefore simply pick a typical weekday in February: February 17, a Wednesday, and get the number of departures frequency for each stop:
 
 ```{r}
-gtfs$trips %>%
-  left_join(gtfs$.$dates_services, by="service_id") %>% view()
-
-get_route_frequency(gtfs, service_ids = service_ids, 
-                                     start_time = 0, end_time = 12*3600) 
-
-get_stop_frequency(gtfs, start_time = 0*3600, end_time = 12*3600, 
-                              service_ids = service_ids, by_route = F)
-
 stop_freq <- gtfs %>% 
   filter_feed_by_date("2020-02-17") %>% 
   get_stop_frequency(start_time = 0*3600, end_time = 24*3600, 
                               by_route = F)
 
-stop_freq_cur <- gtfs_cur %>% 
-  filter_feed_by_date("2022-03-02") %>% 
-  get_stop_frequency(start_time = 0*3600, end_time = 24*3600, 
-                              by_route = F)
-  
+stop_freq %>%
+  head(10) %>% 
+  kbl() %>% 
+    kable_styling(bootstrap_options = c("striped", "hover"))
+
+```
+
+Now we can join the departure data with the locations of the bus stops and draw a map:
+
+```{r}
 library(tmap)
+tmap_mode("view")
 
 gtfs_shp <- gtfs %>% 
   gtfs_as_sf() 
-tmap_mode("view")
+
+
 stop_freq <- gtfs_shp$stops %>% 
   left_join(stop_freq, by = "stop_id") %>% 
   filter(n_departures >1) 
 
 stop_freq %>% 
   tm_shape() +
-  tm_dots(size = "n_departures", col = "n_departures")
-
+  tm_dots(size = "n_departures", col = "n_departures", alpha = .7, popup.vars = c( "# daily departures" = "n_departures"), id = "stop_name")
 
 ```
 
+We can clearly see the four transfer points; a cluster of stations with frequent service along the University Ave/Johnson St couplet, State St, and on the Capitol Square; and one busy quasi-transfer point at East Towne Mall.
+
+# Combining frequency and boardings
+
+Now all that remains is to join our frequency data with the boardings, and then divide the boarding count by the number of departures.
+
 ```{r}
-library(tidyverse)
 library(sf)
-library(mapdeck)
+
+boardings <- st_read("data/Metro_Transit_Ridership_by_Stop.shp")
 ```
 
+Just as a reminder, this is what the raw boarding numbers look like on a map:
+
 ```{r}
-boardings <- st_read("data/Metro_Transit_Ridership_by_Stop.shp") %>% 
+boardings %>% 
+  tm_shape() +
+  tm_dots(col = "Weekday", size = "Weekday", alpha = .7)
+```
+
+Now we join and create a map
+
+```{r}
+boardings <- boardings %>% 
+  mutate(stop_id = as.character(StopID)) %>% 
   st_drop_geometry()
-```
-
-```{r}
-boardings <- 
-  boardings %>% 
-  mutate(tooltip = paste0("Stop: ",
-                          StopDescri,
-                          "<br>",
-                          "Weekday boardings: ",
-                          Weekday),
-         stop_id = as.character(StopID))
 
 stop_freq %>% 
-  group_by(stop_id) %>% 
-  summarize(n_departures_2 = sum(n_departures))%>% 
   left_join(boardings, by = "stop_id") %>% 
-  mutate(boardings_per_bus = Weekday/n_departures_2) %>% 
+  mutate(boardings_per_bus = Weekday/n_departures) %>% 
   tm_shape() +
-  tm_dots(col = "boardings_per_bus", size = "boardings_per_bus")
+  tm_dots(col = "boardings_per_bus", 
+          size = "boardings_per_bus", 
+          alpha = .7, 
+          popup.vars = c("Boardings per departure" = "boardings_per_bus", "Weekday departures" = "n_departures", "Weekday boardings" = "Weekday"), 
+          id = "stop_name",
+          title = "Boardings per departure")
 
-library(mapdeck)
 ```
 
-# Boardings only
+This map looks quite different: The transfer points lose a lot of prominence, whereas the stops on the UW Campus really stand out. Let's look at the top 15 stops in a table.
 
-Zoom in to see the data. Hover over the columns for more information. Right-click and drag to change the view angle and orientation.
-
-```{r results=TRUE}
-mapdeck(style = 'mapbox://styles/mapbox/light-v10', pitch = 45) %>% 
-  mapdeck::add_column(data = boardings, 
-                      elevation = "Weekday",
-                      radius = 20,
-                      fill_colour = "Weekday",
-                      legend = T,
-                      legend_format = list( fill_colour = as.integer ),
-                      legend_options = list(title = "Weekday boardings"),
-                      tooltip = "tooltip"
-                      )
+```{r}
+stop_freq %>% 
+  left_join(boardings, by = "stop_id") %>% 
+  mutate(boardings_per_bus = Weekday/n_departures) %>%
+  st_drop_geometry() %>% 
+  select(stop_name, boardings_per_bus, n_departures) %>% 
+  arrange(desc(boardings_per_bus)) %>% 
+  head(15) %>% 
+  kableExtra::kbl(digits = 1, col.names = c("Stop name", "Boardings per bus", "Daily departures")) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover"))
 ```
+
+The Observatory & Elm EB stop on average has on average 21 passengers boarding each bus. The highest non-UW stop: The stop serving the Epic campus in Verona, with only 30 daily departures. There are only two other non-UW stops in the list: One serves the Madison College campus on the north side, and one is a Park & Ride lot.
+
+# How to interpret these numbers?
+
+What does it tell us that a high number of people board a bus at a given stop? Does it help make decisions for projects such as the [ongoing Network Redesign](https://www.cityofmadison.com/metro/routes-schedules/transit-network-redesign)? I'm curious what the person who initially asked the question thinks about this.
+
+I can see two possible insights from the metric: A large number of people boarding at a stop leads to longer dwell times. [@fricker2011] It takes time for people to step on board, pay or validate their fare, and move through the vehicle, and so the bus will be stopped for a longer time. For schedule planning purposes it is therefore useful to have these numbers. Additionally, it may encourage an agency to think about improvements to vehicles serving such a stop or improving the stop itself: Buses with more doors, faster fare payment and validation, wider aisles, stops with level boarding. And finally, a high number of boardings per bus could indicate that a stop is underserved and needs more frequent buses!
+
+An additional benefit of the metric is that it removes the prominence of the transfer points in the raw numbers. The four transfer points do not have much transit demand by themselves. This is aerial imagery of the North Transfer Point:
+
+![Aerial imagery of North Transfer Point. The area around the transfer point has parking lots, low-density residential housing, and the now-closed Oscar Meyer plant. Image: Google Maps.](img/north_transfer_point_satellite_imagery.png)
+
+The reason for the high raw number of boardings is merely that the current route system is set up in a way that forces riders from outlying areas to transfer at the transfer points to get downtown or across town.
