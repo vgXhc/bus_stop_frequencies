@@ -23,6 +23,9 @@ bibliography: references.bib
 knitr::opts_chunk$set(echo = FALSE)
 ```
 
+## Revision note 2022-03-07
+*After the initial version of this post went up, Jonathan Mertzig pointed out that the number of departures per stop appeared to be wrong for at least one stop, Northern Lights & Epic Staff C (SB). In the post, the stop was listed with 30 departures, which is exactly twice as many as it actually has. I have identified what caused the issue and updated the post accordingly. If you notice any other errors, please let me know.*
+
 ```{r}
 library(tidytransit)
 library(tidyverse)
@@ -63,6 +66,14 @@ gtfs$.$dates_services %>%
 
 We see that there are some services that run on some or all weekdays, some Saturday and Sunday and holiday services. We can also see that some services only run when the UW is in session/on break. Compared to the service pattern examples from the `tidytransit` vignettes, this is quite straightforward.
 
+There is one exception to this straightforwardness: I realized that the final stop on a route gets counted as an additional departure. We can fix this by filtering out any stop time with a `drop_off_type` of 0 (i.e. passenger can only get off the bus).
+
+```{r}
+gtfs$stop_times <- gtfs$stop_times %>% 
+  filter(drop_off_type == 0)
+```
+
+
 Rather than worrying about different service patterns, we therefore simply pick a typical weekday in February: February 17, a Wednesday, and get the number of departures frequency for each stop:
 
 ```{r}
@@ -70,6 +81,8 @@ stop_freq <- gtfs %>%
   filter_feed_by_date("2020-02-17") %>% 
   get_stop_frequency(start_time = 0*3600, end_time = 24*3600, 
                               by_route = F)
+
+
 
 stop_freq %>%
   head(10) %>% 
@@ -98,7 +111,7 @@ stop_freq %>%
 
 ```
 
-We can clearly see the four transfer points; a cluster of stations with frequent service along the University Ave/Johnson St couplet, State St, and on the Capitol Square; and one busy quasi-transfer point at East Towne Mall.
+We can  see the four transfer points; a cluster of stations with frequent service along the University Ave/Johnson St couplet, State St, and on the Capitol Square; and one busy quasi-transfer point at East Towne Mall.
 
 # Combining frequency and boardings
 
@@ -118,7 +131,7 @@ boardings %>%
   tm_dots(col = "Weekday", size = "Weekday", alpha = .7)
 ```
 
-Now we join and create a map
+Next, we join and create a map.
 
 ```{r}
 boardings <- boardings %>% 
@@ -138,7 +151,7 @@ stop_freq %>%
 
 ```
 
-This map looks quite different: The transfer points lose a lot of prominence, whereas the stops on the UW Campus really stand out. Let's look at the top 15 stops in a table.
+This map looks quite different: The transfer points lose some prominence, whereas the stops on the UW Campus really stand out. And out in Verona there is one very prominent stop. Let's look at the top 15 stops in a table.
 
 ```{r}
 stop_freq %>% 
@@ -152,7 +165,7 @@ stop_freq %>%
   kable_styling(bootstrap_options = c("striped", "hover"))
 ```
 
-The Observatory & Elm EB stop on average has on average 21 passengers boarding each bus. The highest non-UW stop: The stop serving the Epic campus in Verona, with only 30 daily departures. There are only two other non-UW stops in the list: One serves the Madison College campus on the north side, and one is a Park & Ride lot.
+The Observatory & Elm EB stop on average has on average 21 passengers boarding each bus. But the stop serving the Epic campus in Verona, with only 15 daily departures is really high up there as well. There are only a few other non-UW stops in the list: One serves the Madison College campus on the north side, and one is a Park & Ride lot; and two of the four transfer points made the cut.
 
 # How to interpret these numbers?
 
@@ -164,4 +177,5 @@ An additional benefit of the metric is that it removes the prominence of the tra
 
 ![Aerial imagery of North Transfer Point. The area around the transfer point has parking lots, low-density residential housing, and the now-closed Oscar Meyer plant. Image: Google Maps.](img/north_transfer_point_satellite_imagery.png)
 
-The reason for the high raw number of boardings is merely that the current route system is set up in a way that forces riders from outlying areas to transfer at the transfer points to get downtown or across town.
+The reason for the high raw number of boardings is merely that the current route system is set up in a way that forces riders from outlying areas to transfer at the transfer points to get downtown or across town. That said, even after adjusting for the number of departures, the tranfers points still have a comparatively high number of boardings per bus.
+
