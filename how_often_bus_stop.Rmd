@@ -11,6 +11,10 @@ repository_url: https://github.com/vgXhc/bus_stop_frequencies
 compare_updates_url:
 creative_commons: CC BY-SA
 preview: img/boardings_per_departure_preview_map.png
+categories:
+  - transit
+  - Madison (WI)
+  - map
 output: 
   distill::distill_article:
     self_contained: false
